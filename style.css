@@ -2,6 +2,23 @@ body {
     background-color: #f8f9fa;
 }
 
+.message pre {
+    background-color: #f1f1f1;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    white-space: pre-wrap; /* Allows long lines to wrap */
+    word-wrap: break-word;
+    color: #333;
+    font-size: 0.85em; /* A bit smaller than main text */
+}
+
+/* Make the code blocks in assistant messages have a slightly different background */
+.assistant-message pre {
+    background-color: #e0e0e0;
+}
+
+
 .tool-request-message {
     background-color: #fff3cd; /* Bootstrap 'warning' light yellow */
     color: #664d03;

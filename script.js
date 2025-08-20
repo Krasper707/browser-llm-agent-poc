@@ -47,7 +47,7 @@ const nativeTools = [
         type: "function",
         function: {
             name: "api_requester",
-            description: "Makes a POST request to a specified API endpoint with a JSON payload. Use this to interact with external services.",
+            description:"Makes a POST request to a specified API endpoint with a JSON payload. The payload object is sent as the request body. Do not add parameters to the URL string itself.",
             parameters: {
                 type: "object",
                 properties: {
@@ -131,21 +131,37 @@ function enableForm() {
  * @param {string} role - 'user', 'assistant', or 'tool-request' for debug view.
  * @param {string} content - The text content of the message.
  */
+/**
+ * Appends a new message to the chat window.
+ * UPGRADED: Now intelligently formats JSON code blocks for better readability.
+ * @param {string} role - 'user', 'assistant', or 'tool-request'.
+ * @param {string} content - The text content of the message.
+ */
 function addMessageToChat(role, content) {
     const messageElement = document.createElement('div');
-    
+
     if (role === 'tool-request') {
-        // Special styling for the model's "thoughts"
         messageElement.classList.add('tool-request-message');
+        messageElement.innerText = content; // Keep thoughts as plain text
     } else {
-        // Standard styling for user and assistant messages
         messageElement.classList.add('message', role === 'user' ? 'user-message' : 'assistant-message');
+
+        // Check if the content is likely a JSON string
+        const jsonRegex = /^\s*[\{\[](.|\s)*[\}\]]\s*$/;
+        if (jsonRegex.test(content.trim())) {
+            // It's JSON, so format it nicely inside a <pre> block
+            const pre = document.createElement('pre');
+            const code = document.createElement('code');
+            code.innerText = content;
+            pre.appendChild(code);
+            messageElement.appendChild(pre);
+        } else {
+            // It's normal text
+            messageElement.innerText = content;
+        }
     }
     
-    messageElement.innerText = content;
     chatWindow.appendChild(messageElement);
-
-    // Scroll to the bottom to see the new message
     chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
@@ -455,7 +471,7 @@ async function runAgentLoop(userInput) {
         loopCount++;
         const assistantMessage = await callLLM(conversationHistory);
 
-        // --- NATIVE TOOL-CALLING LOGIC (With all 3 tools) ---
+        // --- NATIVE TOOL-CALLING LOGIC ---
         if (!isReActMode && assistantMessage.tool_calls) {
             conversationHistory.push(assistantMessage);
             const toolPromises = assistantMessage.tool_calls.map(async (toolCall) => {
@@ -463,34 +479,24 @@ async function runAgentLoop(userInput) {
                 const functionArgs = JSON.parse(toolCall.function.arguments);
                 let toolResultContent;
 
-                // Use a switch to handle different tools
                 switch (functionName) {
-                    case 'google_search':
-                        toolResultContent = await executeGoogleSearch(functionArgs.query);
-                        break;
-                    case 'javascript_executor':
-                        toolResultContent = await executeJavaScript(functionArgs.code);
-                        break;
-                    case 'api_requester':
-                        toolResultContent = await executeApiRequest(functionArgs.url, functionArgs.payload);
-                        break;
-                    default:
-                        toolResultContent = `Error: Unknown tool '${functionName}'.`;
+                    case 'google_search': toolResultContent = await executeGoogleSearch(functionArgs.query); break;
+                    case 'javascript_executor': toolResultContent = await executeJavaScript(functionArgs.code); break;
+                    case 'api_requester': toolResultContent = await executeApiRequest(functionArgs.url, functionArgs.payload); break;
+                    default: toolResultContent = `Error: Unknown tool '${functionName}'.`;
                 }
+                
+                // Show the raw tool output in the UI
+                addMessageToChat('assistant', toolResultContent);
 
-                return {
-                    role: "tool",
-                    tool_call_id: toolCall.id,
-                    name: functionName,
-                    content: toolResultContent
-                };
+                return { role: "tool", tool_call_id: toolCall.id, name: functionName, content: toolResultContent };
             });
             const resolvedToolResults = await Promise.all(toolPromises);
             conversationHistory.push(...resolvedToolResults);
             continue;
         
-        // --- ReAct TEXT-BASED LOGIC (With all 3 tools) ---
-        } else if (isReActMode && assistantMessage.content.includes('<tool_call>')) {
+        // --- ReAct TEXT-BASED LOGIC ---
+        } else if (isReActMode && assistantMessage.content && assistantMessage.content.includes('<tool_call>')) {
             const toolCallMatch = assistantMessage.content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
             if (toolCallMatch) {
                 const jsonStr = toolCallMatch[1].trim();
@@ -502,20 +508,16 @@ async function runAgentLoop(userInput) {
                     const toolArgs = toolCall.arguments || toolCall;
                     let toolResultContent;
 
-                    // Use a switch to handle different tools
                     switch (toolName) {
-                        case 'google_search':
-                            toolResultContent = await executeGoogleSearch(toolArgs.query);
-                            break;
-                        case 'javascript_executor':
-                            toolResultContent = await executeJavaScript(toolArgs.code);
-                            break;
-                        case 'api_requester':
-                            toolResultContent = await executeApiRequest(toolArgs.url, toolArgs.payload);
-                            break;
-                        default:
-                            toolResultContent = `Error: An unknown tool named '${toolName}' was called.`;
+                        case 'google_search': toolResultContent = await executeGoogleSearch(toolArgs.query); break;
+                        case 'javascript_executor': toolResultContent = await executeJavaScript(toolArgs.code); break;
+                        case 'api_requester': toolResultContent = await executeApiRequest(toolArgs.url, toolArgs.payload); break;
+                        default: toolResultContent = `Error: An unknown tool named '${toolName}' was called.`;
                     }
+
+                    // Show the raw tool output in the UI
+                    addMessageToChat('assistant', toolResultContent);
+                    
                     conversationHistory.push({ role: "user", content: `<tool_result>${toolResultContent}</tool_result>` });
                     continue;
                 } catch (e) {
@@ -525,7 +527,7 @@ async function runAgentLoop(userInput) {
                 }
             }
         
-        // --- NO TOOL CALL ---
+        // --- NO TOOL CALL or FAILED LLM CALL ---
         } else {
             addMessageToChat('assistant', assistantMessage.content);
             conversationHistory.push(assistantMessage);
