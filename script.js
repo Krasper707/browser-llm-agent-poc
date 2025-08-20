@@ -9,8 +9,6 @@ const modelPickerContainer = document.getElementById('model-picker-container');
 const modelSelect = document.getElementById('model-select');
 
 // --- API Keys ---
-const GOOGLE_API_KEY = "AIzaSyASbzJwcNl-OLsNQ8eOlqslL3jhfIpuSJE";
-const GOOGLE_CX_ID = "97b32ef0dee6c42d1";
 
 // --- State Management ---
 let llm;
