@@ -10,6 +10,9 @@ const modelSelect = document.getElementById('model-select');
 
 // --- API Keys ---
 
+const GOOGLE_API_KEY = "AIzaSyAIaoS1t2mGt1Tt2r_M6qbayoXXdNwGYhM";
+const GOOGLE_CX_ID = "97b32ef0dee6c42d1";
+
 // --- State Management ---
 let llm;
 let conversationHistory = [];
@@ -124,6 +127,30 @@ function enableForm() {
     messageForm.querySelector('button').innerHTML = 'Send';
 }
 
+const alertContainer = document.getElementById('alert-container');
+
+/**
+ * Displays a Bootstrap alert message that fades out automatically.
+ * @param {string} message - The message to display.
+ * @param {string} type - The alert type (e.g., 'danger', 'success', 'info').
+ */
+function showAlert(message, type = 'danger') {
+    const alertElement = document.createElement('div');
+    alertElement.className = `alert alert-${type} alert-dismissible fade show`;
+    alertElement.role = 'alert';
+    alertElement.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    alertContainer.appendChild(alertElement);
+
+    // Automatically remove the alert after 5 seconds
+    setTimeout(() => {
+        alertElement.classList.remove('show');
+        setTimeout(() => alertElement.remove(), 150); // Allow fade out animation
+    }, 5000);
+}
+
 /**
  * Appends a new message to the chat window, with special styling for model "thoughts".
  * @param {string} role - 'user', 'assistant', or 'tool-request' for debug view.
@@ -137,25 +164,33 @@ function enableForm() {
  */
 function addMessageToChat(role, content) {
     const messageElement = document.createElement('div');
+    
+    // THE FIX: Coerce content to an empty string if it's null or undefined.
+    // This prevents the .trim() crash.
+    const messageContent = content || "";
 
     if (role === 'tool-request') {
         messageElement.classList.add('tool-request-message');
-        messageElement.innerText = content; // Keep thoughts as plain text
+        messageElement.innerHTML = `
+            <div class="thought-content is-collapsed">
+                <strong>Model Thought:</strong>
+                <pre class="mb-0"><code>${messageContent}</code></pre>
+            </div>
+            <div class="toggle-indicator"></div>
+        `;
     } else {
         messageElement.classList.add('message', role === 'user' ? 'user-message' : 'assistant-message');
-
-        // Check if the content is likely a JSON string
         const jsonRegex = /^\s*[\{\[](.|\s)*[\}\]]\s*$/;
-        if (jsonRegex.test(content.trim())) {
-            // It's JSON, so format it nicely inside a <pre> block
-            const pre = document.createElement('pre');
-            const code = document.createElement('code');
-            code.innerText = content;
-            pre.appendChild(code);
-            messageElement.appendChild(pre);
+
+        if (jsonRegex.test(messageContent.trim())) {
+            messageElement.innerHTML = `
+                <div class="code-block-wrapper">
+                    <pre><code>${messageContent}</code></pre>
+                    <button class="copy-code-btn">Copy</button>
+                </div>
+            `;
         } else {
-            // It's normal text
-            messageElement.innerText = content;
+            messageElement.innerText = messageContent;
         }
     }
     
@@ -191,14 +226,19 @@ async function callLLM(messages) {
         }
         return (await response.json()).choices[0].message;
     } catch (error) {
-        console.error("Error calling LLM:", error);
-        return { role: 'assistant', content: `Sorry, I ran into an error: ${error.message}` };
+    console.error("Error calling LLM:", error); // Keep for your own debugging
+    showAlert(`LLM API Error: ${error.message}`);
+    return { role: 'assistant', content: `Sorry, an error occurred. Please check the alert in the top right.` };
     }
 }
 
 // --- Tool Execution Function (Unchanged, used by both strategies) ---
 async function executeGoogleSearch(query) { /* ... same as before ... */ }
-executeGoogleSearch = async (query) => { addMessageToChat('assistant', `Searching Google for "${query}"...`); const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CX_ID}&q=${encodeURIComponent(query)}`; try { const response = await fetch(url); if (!response.ok) throw new Error(`Google Search API failed with status ${response.status}`); const data = await response.json(); if (!data.items || data.items.length === 0) return "No results found."; return data.items.slice(0, 3).map(item => item.snippet).join('\n---\n'); } catch (error) { console.error("Google Search failed:", error); return `Error performing search: ${error.message}`; } };
+executeGoogleSearch = async (query) => { addMessageToChat('assistant', `Searching Google for "${query}"...`); const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CX_ID}&q=${encodeURIComponent(query)}`; try { const response = await fetch(url); if (!response.ok) throw new Error(`Google Search API failed with status ${response.status}`); const data = await response.json(); if (!data.items || data.items.length === 0) return "No results found."; return data.items.slice(0, 3).map(item => item.snippet).join('\n---\n'); } catch (error) { 
+    console.error("Google Search failed:", error);
+    showAlert(`Google Search failed: ${error.message}`);
+    return `Error performing search. Please check the alert.`; 
+} };
 
 /**
  * Executes a string of JavaScript code safely.
@@ -208,12 +248,17 @@ executeGoogleSearch = async (query) => { addMessageToChat('assistant', `Searchin
 async function executeJavaScript(code) {
     addMessageToChat('assistant', `Executing JavaScript:\n\`\`\`\n${code}\n\`\`\``);
     try {
-        // new Function() is safer than eval() as it doesn't have access to the local scope.
-        // For a real app, a more secure sandbox (like a Web Worker or iframe) would be better.
-        const result = new Function(code)();
-        return JSON.stringify(result, null, 2); // Pretty-print JSON results
+        // THE FIX: Check if the code already has a 'return'. If not, add it.
+        // This allows the model to send simple expressions like "2+2" directly.
+        const codeToRun = code.includes('return') ? code : `return ${code}`;
+        
+        const result = new Function(codeToRun)();
+        
+        // Another fix: JSON.stringify(undefined) is undefined. Default to the string 'null'.
+        return JSON.stringify(result, null, 2) || 'null';
     } catch (error) {
-        return `Error executing code: ${error.message}`;
+        showAlert(`JavaScript Execution Error: ${error.message}`);
+        return `Error executing code. Please check the alert.`;
     }
 }
 
@@ -237,7 +282,8 @@ async function executeApiRequest(url, payload) {
         const data = await response.json();
         return JSON.stringify(data, null, 2); // Pretty-print the JSON response
     } catch (error) {
-        return `Error with API request: ${error.message}`;
+    showAlert(`API Request Error: ${error.message}`);
+    return `Error with API request. Please check the alert.`;
     }
 }
 
@@ -548,6 +594,32 @@ messageForm.addEventListener('submit', async (event) => {
     await runAgentLoop(userInput);
 });
 
+chatWindow.addEventListener('click', (event) => {
+    // Handle toggling the "Model Thought" bubbles
+    const thoughtBubble = event.target.closest('.tool-request-message');
+    if (thoughtBubble) {
+        const content = thoughtBubble.querySelector('.thought-content');
+        content.classList.toggle('is-collapsed');
+        return; // Stop further processing
+    }
+
+    // Handle the "Copy" button on code blocks
+    const copyBtn = event.target.closest('.copy-code-btn');
+    if (copyBtn) {
+        const code = copyBtn.previousElementSibling.querySelector('code').innerText;
+        navigator.clipboard.writeText(code).then(() => {
+            copyBtn.innerText = 'Copied!';
+            setTimeout(() => {
+                copyBtn.innerText = 'Copy';
+            }, 2000);
+        }).catch(err => {
+            console.error('Failed to copy text: ', err);
+            showAlert('Failed to copy code.', 'warning');
+        });
+    }
+});
+
+
 // --- ADAPTIVE Initialization ---
 async function initializeApp() {
     try {
@@ -575,8 +647,8 @@ async function initializeApp() {
         enableForm();
 
     } catch (error) {
-        console.error("Configuration failed:", error);
-        addMessageToChat('assistant', `Configuration failed: ${error.message}. Please refresh page.`);
+    console.error("Configuration failed:", error); // Keep for your own debugging
+    showAlert(`Configuration failed: ${error.message}`);
     }
 }
 
