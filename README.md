@@ -36,7 +36,7 @@ You will need API keys for the services you intend to use:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-github-username/browser-llm-agent-poc.git
+    git clone https://github.com/Krasper707/browser-llm-agent-poc.git
     cd browser-llm-agent-poc
     ```
 
